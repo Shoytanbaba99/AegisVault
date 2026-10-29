@@ -3,15 +3,15 @@
 #include <ESP32Servo.h>
 
 // --- PIN ASSIGNMENTS ---
-const int PIN_LDR           = 34;
-const int PIN_PIR           = 27;
-const int PIN_TAMPER_SWITCH = 14;
-const int PIN_SERVO_DOOR    = 18;
-const int PIN_SERVO_DROP    = 13;
-const int PIN_BUZZER_TIER1  = 25;
-const int PIN_BUZZER_TIER2  = 26;
-const int PIN_LED_ALARM     = 32;
-const int PIN_LED_STROBE    = 33;
+const int PIN_LDR           = 34; // paired with RBD-0995 & RBD-0868 (100K pull-down)
+const int PIN_PIR           = 27; // RBD-0023 Motion Sensor
+const int PIN_TAMPER_SWITCH = 14; // RBD-0761 Tactile Push Button (Uses Internal Pull-Up)
+const int PIN_SERVO_DOOR    = 18; // RBD-0020 Door Deadbolt Servo
+const int PIN_SERVO_DROP    = 13; // RBD-0020 Platform Concealment Servo
+const int PIN_BUZZER_TIER1  = 25; // RBD-0753 5V Active Buzzer 1 (Pulsed Warning)
+const int PIN_BUZZER_TIER2  = 26; // RBD-0753 5V Active Buzzer 2 (Continuous Siren)
+const int PIN_LED_ALARM     = 32; // RBD-0768 Red LED (with 330R current limiter)
+const int PIN_LED_STROBE    = 33; // RBD-1299 White LED (with 330R current limiter)
 
 // --- SERVO LIMIT CONSTANTS ---
 const int SERVO_DOOR_UNLOCKED       = 0;
@@ -33,9 +33,10 @@ SystemState currentState = STATE_CALIBRATING;
 Servo servoDoor;
 Servo servoPedestal;
 
-// --- NETWORK CONFIG ---
-const char* WIFI_SSID     = "Wokwi-GUEST";
-const char* WIFI_PASSWORD = "";
+// --- REAL-WORLD NETWORK CONFIG ---
+// UPDATE THESE WITH YOUR PHONE HOTSPOT OR LAB WI-FI CREDENTIALS
+const char* WIFI_SSID     = "Your_Phone_Hotspot_Name"; 
+const char* WIFI_PASSWORD = "Your_Hotspot_Password";
 const char* MQTT_BROKER   = "broker.hivemq.com";
 const int   MQTT_PORT     = 1883;
 
@@ -75,9 +76,7 @@ void setPhysicalStandby() {
   servoDoor.write(SERVO_DOOR_UNLOCKED);
   servoPedestal.write(SERVO_PEDESTAL_SURFACE);
   
-  // Explicitly kill both audio channels
-  noTone(PIN_BUZZER_TIER1);
-  noTone(PIN_BUZZER_TIER2);
+  // Cut pure DC power cleanly to both physical active buzzers
   digitalWrite(PIN_BUZZER_TIER1, LOW);
   digitalWrite(PIN_BUZZER_TIER2, LOW);
   
@@ -105,11 +104,11 @@ void enterTier2Escalation() {
   Serial.println("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
   Serial.println("[CRITICAL] TIER 2 ESCALATION: VAULT TAMPERING!");
   Serial.println("  -> Limit switch tripped in concealed compartment!");
-  Serial.println("  -> Sounding 3500 Hz High-Frequency Resonant Siren");
+  Serial.println("  -> Engaging Continuous 5V Tier 2 Active Siren");
   Serial.println("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 
-  noTone(PIN_BUZZER_TIER1);
-  tone(PIN_BUZZER_TIER2, 3500);
+  digitalWrite(PIN_BUZZER_TIER1, LOW);  // Ensure Tier 1 audio channel drops
+  digitalWrite(PIN_BUZZER_TIER2, HIGH); // Send constant 5V to drive physical active buzzer oscillator
   publishTelemetry("TIER_2_CRITICAL_BREACH");
 }
 
@@ -221,11 +220,9 @@ void handleSignalingPatterns() {
       lastStrobe = now;
       strobeState = !strobeState;
       digitalWrite(PIN_LED_STROBE, strobeState ? HIGH : LOW);
-      if (strobeState) {
-        tone(PIN_BUZZER_TIER1, 880);
-      } else {
-        noTone(PIN_BUZZER_TIER1);
-      }
+      
+      // Pulse physical active buzzer state symmetrically along with strobe pacing
+      digitalWrite(PIN_BUZZER_TIER1, strobeState ? HIGH : LOW);
     }
   } else if (currentState == STATE_BREACH_TIER2) {
     if (now - lastStrobe >= 80) {
@@ -331,18 +328,17 @@ void loop() {
     }
 
     case STATE_DISARMED: {
-      // 5-second cooldown gives you time to slide the LDR back to light
+      // 5-second cooldown gives you time to align your laser pointer clean on the LDR
       if (millis() - disarmTimestamp > 5000) {
         if (!beamCut) {
           currentState = STATE_IDLE_ARMED;
           Serial.println("\n[ARMED] Cooldown complete and beam clear. Vault re-armed.");
           publishTelemetry("SYSTEM_RESTORED_ARMED");
         } else {
-          // Keep waiting until the user resets the LDR slider
           static unsigned long lastWarn = 0;
           if (millis() - lastWarn > 3000) {
             lastWarn = millis();
-            Serial.println("[NOTICE] Disarmed. Please slide LDR back toward light to re-arm.");
+            Serial.println("[NOTICE] Disarmed. Please re-align laser onto the LDR to arm system.");
           }
         }
       }
